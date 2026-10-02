@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f4f5f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111318" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Lager">
+<title>Lagerverwaltung</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f0f1f4;
+    --card-bg: #ffffff;
+    --card-border: #e2e5ea;
+    --active-border: #4f46e5;
+    --active-bg: #eef2ff;
+    --active-icon-bg: #4f46e5;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --ok: #16a34a;
+    --ok-bg: #dcfce7;
+    --err: #dc2626;
+    --err-bg: #fee2e2;
+    --focus-ring: #4f46e5;
+    --shadow: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
+    --shadow-md: 0 4px 10px rgba(16,24,40,.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e0f13;
+      --card-bg: #1a1c22;
+      --card-border: #2c2f38;
+      --active-border: #818cf8;
+      --active-bg: #221f3d;
+      --active-icon-bg: #6366f1;
+      --text: #e8e9ec;
+      --muted: #8b8f9a;
+      --ok: #4ade80;
+      --ok-bg: #14301f;
+      --err: #f87171;
+      --err-bg: #3a1618;
+      --focus-ring: #818cf8;
+      --shadow: 0 1px 2px rgba(0,0,0,.3);
+      --shadow-md: 0 4px 14px rgba(0,0,0,.4);
+    }
+  }
+  * { box-sizing: border-box; }
+  html {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    justify-content: center;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: max(16px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+    overscroll-behavior-y: contain;
+  }
+  .app {
+    width: 100%;
+    max-width: 460px;
+    display: flex;
+    flex-direction: column;
+    min-height: calc(100dvh - 36px);
+  }
+  header {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: center;
+    margin-bottom: 12px;
+  }
+  header .logo { width: 22px; height: 22px; color: var(--active-border); flex-shrink: 0; }
+  h1 { font-size: 15px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+  .logout-form { position: absolute; right: 0; top: 50%; transform: translateY(-50%); margin: 0; }
+  .logout-btn {
+    width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;
+    border: none; background: transparent; color: var(--muted); cursor: pointer; touch-action: manipulation;
+    border-radius: 8px; padding: 0;
+  }
+  .logout-btn:active { background: var(--card-bg); }
+  .logout-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  .logout-btn svg { width: 17px; height: 17px; }
+
+  /* Modus: kompakte Segmented-Control, immer sichtbar wie an der Kasse */
+  .mode-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+  .mode-tab {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    height: 40px;
+    border-radius: 10px;
+    border: 1.5px solid var(--card-border);
+    background: var(--card-bg);
+    color: var(--muted);
+    font-family: inherit;
+    font-size: 12.5px;
+    font-weight: 700;
+    cursor: pointer;
+    touch-action: manipulation;
+    transition: border-color .15s ease, background-color .15s ease, color .15s ease, transform .1s ease;
+  }
+  .mode-tab:active { transform: scale(0.97); }
+  .mode-tab svg { width: 15px; height: 15px; flex-shrink: 0; }
+  .mode-tab[aria-pressed="true"] {
+    border-color: var(--active-border);
+    background: var(--active-bg);
+    color: var(--active-border);
+  }
+  .mode-tab:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { .mode-tab { transition: none; } }
+
+  .context-panel {
+    background: var(--card-bg);
+    border-radius: 14px;
+    padding: 10px 12px;
+    border: 1px solid var(--card-border);
+    box-shadow: var(--shadow);
+    margin-bottom: 10px;
+  }
+  .field-label {
+    display: block;
+    font-size: 10.5px;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    margin-bottom: 4px;
+  }
+  .transfer-row { display: none; grid-template-columns: 1fr auto 1fr; gap: 6px; align-items: end; margin-bottom: 8px; }
+  .transfer-row.show { display: grid; }
+  .transfer-row .arrow { padding-bottom: 9px; color: var(--muted); }
+  .transfer-row .arrow svg { width: 16px; height: 16px; display: block; }
+  .single-row { display: none; margin-bottom: 8px; }
+  .single-row.show { display: block; }
+  select {
+    width: 100%;
+    font-size: 15px;
+    padding: 8px 8px;
+    border: 1.5px solid var(--card-border);
+    border-radius: 9px;
+    background-color: var(--card-bg);
+    color: var(--text);
+    font-family: inherit;
+  }
+  select:focus-visible { outline: none; border-color: var(--focus-ring); box-shadow: 0 0 0 3px var(--active-bg); }
+
+  .qty-mode-toggle {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+  }
+  .qty-mode-btn {
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    height: 38px; padding: 0 10px; border-radius: 9px; border: 1.5px solid var(--card-border);
+    background: var(--card-bg); color: var(--text); font-family: inherit; font-size: 13px; font-weight: 600;
+    cursor: pointer; touch-action: manipulation;
+    transition: border-color .15s ease, background-color .15s ease, color .15s ease, transform .1s ease;
+  }
+  .qty-mode-btn:active { transform: scale(0.97); }
+  .qty-mode-btn svg { width: 17px; height: 17px; flex-shrink: 0; }
+  .qty-mode-btn[aria-pressed="true"] { border-color: var(--active-border); background: var(--active-bg); color: var(--active-border); }
+  .qty-mode-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { .qty-mode-btn { transition: none; } }
+
+  .scan-panel {
+    background: var(--card-bg); border-radius: 14px; padding: 12px;
+    border: 1px solid var(--card-border); box-shadow: var(--shadow); margin-bottom: 10px;
+  }
+  .scan-box { position: relative; }
+  .scan-box svg.scan-icon {
+    position: absolute; left: 13px; top: 50%; transform: translateY(-50%);
+    width: 19px; height: 19px; color: var(--muted); pointer-events: none;
+  }
+  #barcodeInput {
+    width: 100%; font-size: 16px; font-weight: 600; padding: 14px 12px 14px 42px;
+    border: 1.5px solid var(--card-border); border-radius: 11px; background-color: var(--card-bg);
+    color: var(--text); font-family: inherit; text-align: left;
+  }
+  #barcodeInput::placeholder { color: var(--muted); font-weight: 400; }
+  #barcodeInput:focus-visible { outline: none; border-color: var(--focus-ring); box-shadow: 0 0 0 3px var(--active-bg); }
+  .queue-indicator { margin-top: 5px; min-height: 14px; font-size: 11.5px; font-weight: 600; color: var(--active-border); }
+
+  .result {
+    margin-top: 10px; padding: 12px 14px; border-radius: 11px; font-size: 14px; font-weight: 600;
+    text-align: left; display: flex; align-items: flex-start; gap: 9px;
+    opacity: 0; transform: translateY(-4px); transition: opacity .18s ease, transform .18s ease; pointer-events: none;
+  }
+  .result.show { opacity: 1; transform: translateY(0); }
+  @media (prefers-reduced-motion: reduce) { .result { transition: none; } }
+  .result svg { width: 19px; height: 19px; flex-shrink: 0; margin-top: 1px; }
+  .result.ok { background: var(--ok-bg); color: var(--ok); }
+  .result.err { background: var(--err-bg); color: var(--err); }
+
+  .undo-row { margin-top: 8px; }
+  .undo-btn {
+    width: 100%; display: flex; align-items: center; justify-content: center; gap: 7px;
+    height: 38px; border-radius: 10px; border: 1.5px dashed var(--card-border); background: transparent;
+    color: var(--muted); font-family: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
+    touch-action: manipulation; transition: border-color .15s ease, color .15s ease;
+  }
+  .undo-btn:disabled { opacity: .45; cursor: default; }
+  .undo-btn:not(:disabled):active { transform: scale(0.98); }
+  .undo-btn:not(:disabled) { border-color: var(--err); color: var(--err); }
+  .undo-btn svg { width: 15px; height: 15px; }
+
+  /* Bon: gruppierte Summe pro Artikel, der Hauptinhalt der Seite */
+  .receipt {
+    flex: 1;
+    background: var(--card-bg); border-radius: 14px; padding: 12px 14px;
+    border: 1px solid var(--card-border); box-shadow: var(--shadow);
+    display: flex; flex-direction: column; min-height: 120px;
+  }
+  .receipt-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+  .receipt-title { font-size: 10.5px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+  .receipt-reset {
+    font-family: inherit; font-size: 12px; font-weight: 600; color: var(--muted);
+    background: transparent; border: none; padding: 6px 2px; margin: -6px -2px;
+    cursor: pointer; touch-action: manipulation; text-decoration: underline;
+  }
+  .receipt-reset:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: 4px; }
+  .receipt-list { margin: 0; padding: 0; list-style: none; overflow-y: auto; flex: 1; }
+  .receipt-list li {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+    font-size: 14px; padding: 7px 0; border-top: 1px solid var(--card-border);
+  }
+  .receipt-list li:first-child { border-top: none; }
+  .receipt-name { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .receipt-count { font-weight: 700; color: var(--active-border); flex-shrink: 0; font-variant-numeric: tabular-nums; }
+  .receipt-empty { font-size: 12.5px; color: var(--muted); padding: 4px 0; }
+  .receipt-total {
+    display: flex; align-items: baseline; justify-content: space-between;
+    margin-top: 6px; padding-top: 8px; border-top: 1.5px solid var(--card-border);
+    font-size: 13px; font-weight: 700;
+  }
+  .receipt-total .n { color: var(--muted); font-weight: 600; }
+  .receipt-total .v { font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+
+<div id="flashOverlay" aria-hidden="true" style="position:fixed;inset:0;pointer-events:none;opacity:0;z-index:999;transition:opacity .4s ease;"></div>
+
+<div class="app">
+  <header>
+    <svg class="logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+      <path d="M12 2 4 6v6c0 5 3.5 8.5 8 10 4.5-1.5 8-5 8-10V6l-8-4Z" stroke-linejoin="round"/>
+      <path d="M9 12l2 2 4-4" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <h1>Lagerverwaltung — Leine Honig</h1>
+    <form method="POST" action="/logout" class="logout-form">
+      <button type="submit" class="logout-btn" aria-label="Abmelden" title="Abmelden">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 17l5-5-5-5" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 12H9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </form>
+  </header>
+
+  <div class="mode-tabs" role="group" aria-label="Modus wählen">
+    <button type="button" class="mode-tab" data-mode="Einlagern" aria-pressed="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0-4-4m4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Einlagern
+    </button>
+    <button type="button" class="mode-tab" data-mode="Umlagern" aria-pressed="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3 21 7l-4 4" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 7h18" stroke-linecap="round" stroke-linejoin="round"/><path d="M7 21 3 17l4-4" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 17H3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Umlagern
+    </button>
+    <button type="button" class="mode-tab" data-mode="Auslagern" aria-pressed="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 15V3m0 0 4 4m-4-4-4 4" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Auslagern
+    </button>
+  </div>
+
+  <div class="context-panel">
+    <div class="transfer-row" id="transferRow">
+      <div>
+        <label class="field-label" for="fromLocation">Von</label>
+        <select id="fromLocation" name="fromLocation" autocomplete="off"></select>
+      </div>
+      <div class="arrow" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14m0 0-5-5m5 5-5 5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div>
+        <label class="field-label" for="toLocation">Nach</label>
+        <select id="toLocation" name="toLocation" autocomplete="off"></select>
+      </div>
+    </div>
+    <div class="single-row" id="singleLocationRow">
+      <label class="field-label" for="singleLocation">Lagerort</label>
+      <select id="singleLocation" name="singleLocation" autocomplete="off"></select>
+    </div>
+    <div class="qty-mode-row">
+      <label class="field-label">Menge</label>
+      <div class="qty-mode-toggle" role="group" aria-label="Menge wählen">
+        <button type="button" class="qty-mode-btn" id="qtyModeSingle" data-qty="1" aria-pressed="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Einzeln
+        </button>
+        <button type="button" class="qty-mode-btn" id="qtyModeCarton" data-qty="12" aria-pressed="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 8 12 3 3 8l9 5 9-5Z" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 8v8l9 5 9-5V8" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 13v8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Karton (12)
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="scan-panel">
+    <div class="scan-box">
+      <svg class="scan-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7V5a1 1 0 0 1 1-1h2M4 17v2a1 1 0 0 0 1 1h2M20 7V5a1 1 0 0 0-1-1h-2M20 17v2a1 1 0 0 1-1 1h-2M4 12h16" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <input type="text" id="barcodeInput" name="barcode" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Barcode scannen oder Artikel eintippen…">
+      <datalist id="partsDatalist"></datalist>
+    </div>
+    <div class="queue-indicator" id="queueIndicator" aria-live="polite"></div>
+    <div class="result" id="result" role="status" aria-live="polite">
+      <svg id="resultIcon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"></svg>
+      <span id="resultText"></span>
+    </div>
+    <div class="undo-row">
+      <button type="button" class="undo-btn" id="undoBtn" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 13a9 9 0 1 0 2.6-6.4L3 9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Letzten Scan rückgängig machen
+      </button>
+    </div>
+  </div>
+
+  <div class="receipt">
+    <div class="receipt-header">
+      <span class="receipt-title">Bon — Summe pro Artikel</span>
+      <button type="button" id="counterReset" class="receipt-reset">Zurücksetzen</button>
+    </div>
+    <ul class="receipt-list" id="counterList"></ul>
+    <div class="receipt-total" id="receiptTotal" style="display:none;">
+      <span class="n">Gesamt</span>
+      <span class="v" id="receiptTotalValue">0</span>
+    </div>
+  </div>
+</div>
+
+<script>
+const API_ACTION = '/api/scan';
+const API_LOCATIONS = '/api/locations';
+const API_PARTS = '/api/parts';
+const API_UNDO = '/api/undo';
+
+const ICON_OK = '<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16Zm3.03-9.47a.75.75 0 00-1.06-1.06L9 10.44 7.03 8.47a.75.75 0 00-1.06 1.06l2.5 2.5a.75.75 0 001.06 0l4.5-4.5Z" clip-rule="evenodd"/>';
+const ICON_ERR = '<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16ZM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22Z" clip-rule="evenodd"/>';
+
+const modeTabs = document.querySelectorAll('.mode-tab');
+const input = document.getElementById('barcodeInput');
+const resultBox = document.getElementById('result');
+const resultIcon = document.getElementById('resultIcon');
+const resultText = document.getElementById('resultText');
+const flashOverlay = document.getElementById('flashOverlay');
+const partsDatalist = document.getElementById('partsDatalist');
+const transferRow = document.getElementById('transferRow');
+const fromSelect = document.getElementById('fromLocation');
+const toSelect = document.getElementById('toLocation');
+const singleLocationRow = document.getElementById('singleLocationRow');
+const singleLocationSelect = document.getElementById('singleLocation');
+const qtyModeSingle = document.getElementById('qtyModeSingle');
+const qtyModeCarton = document.getElementById('qtyModeCarton');
+const counterList = document.getElementById('counterList');
+const counterReset = document.getElementById('counterReset');
+const receiptTotal = document.getElementById('receiptTotal');
+const receiptTotalValue = document.getElementById('receiptTotalValue');
+const undoBtn = document.getElementById('undoBtn');
+
+function safeGetStorage(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+function safeSetStorage(key, value) { try { localStorage.setItem(key, value); } catch (e) {} }
+
+let audioCtx = null;
+function getAudioContext() {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+    return audioCtx;
+  } catch (e) { return null; }
+}
+function beep(freq, startTime, duration, type, peakGain) {
+  const ctx = getAudioContext();
+  if (!ctx) return;
+  try {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, startTime);
+    gain.gain.setValueAtTime(0, startTime);
+    gain.gain.linearRampToValueAtTime(peakGain, startTime + 0.01);
+    gain.gain.linearRampToValueAtTime(0, startTime + duration);
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.start(startTime); osc.stop(startTime + duration + 0.02);
+  } catch (e) {}
+}
+function playSuccessSound() { const ctx = getAudioContext(); if (!ctx) return; const now = ctx.currentTime; beep(880, now, 0.09, 'sine', 0.2); beep(1320, now + 0.1, 0.14, 'sine', 0.2); }
+function playErrorSound() { const ctx = getAudioContext(); if (!ctx) return; const now = ctx.currentTime; beep(220, now, 0.15, 'square', 0.15); beep(165, now + 0.17, 0.2, 'square', 0.15); }
+
+let flashTimer = null;
+function flashScreen(ok) {
+  flashOverlay.style.background = ok ? '#16a34a' : '#dc2626';
+  flashOverlay.style.opacity = '0';
+  void flashOverlay.offsetWidth;
+  flashOverlay.style.opacity = '0.55';
+  if (flashTimer) clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => { flashOverlay.style.opacity = '0'; }, 500);
+}
+
+let currentMode = safeGetStorage('lagerModus') || 'Einlagern';
+
+// Menge: nur zwei feste Optionen, keine freie Eingabe.
+let quantityMode = safeGetStorage('lagerMengenModus') === 'carton' ? 'carton' : 'single';
+function currentQty() { return quantityMode === 'carton' ? 12 : 1; }
+function updateQtyModeUI() {
+  qtyModeSingle.setAttribute('aria-pressed', String(quantityMode === 'single'));
+  qtyModeCarton.setAttribute('aria-pressed', String(quantityMode === 'carton'));
+}
+updateQtyModeUI();
+function setQtyMode(mode) {
+  quantityMode = mode;
+  safeSetStorage('lagerMengenModus', mode);
+  updateQtyModeUI();
+  input.focus();
+}
+qtyModeSingle.addEventListener('click', () => setQtyMode('single'));
+qtyModeCarton.addEventListener('click', () => setQtyMode('carton'));
+
+let loadedLocations = [];
+function applySingleLocationDefault() {
+  if (currentMode !== 'Einlagern' && currentMode !== 'Auslagern') return;
+  if (!loadedLocations.length) return;
+  const storageKey = currentMode === 'Einlagern' ? 'lagerOrtEin' : 'lagerOrtAus';
+  const saved = safeGetStorage(storageKey);
+  const savedIsValid = saved && Array.from(singleLocationSelect.options).some(o => o.value === saved);
+  if (savedIsValid) {
+    singleLocationSelect.value = saved;
+  } else if (currentMode === 'Einlagern') {
+    const keller = loadedLocations.find(l => (l.name || '').trim().toLowerCase() === 'keller');
+    if (keller) singleLocationSelect.value = String(keller.pk);
+  }
+}
+
+function updateModeUI() {
+  modeTabs.forEach(c => c.setAttribute('aria-pressed', String(c.dataset.mode === currentMode)));
+  transferRow.classList.toggle('show', currentMode === 'Umlagern');
+  singleLocationRow.classList.toggle('show', currentMode === 'Einlagern' || currentMode === 'Auslagern');
+  applySingleLocationDefault();
+}
+updateModeUI();
+
+modeTabs.forEach(tab => {
+  tab.addEventListener('click', () => {
+    getAudioContext();
+    currentMode = tab.dataset.mode;
+    safeSetStorage('lagerModus', currentMode);
+    updateModeUI();
+    input.focus();
+  });
+});
+
+async function loadLocations() {
+  try {
+    const resp = await fetch(API_LOCATIONS);
+    if (resp.status === 401) { window.location.href = '/login'; return; }
+    const locations = await resp.json();
+    loadedLocations = locations;
+    const savedFrom = safeGetStorage('lagerVon');
+    const savedTo = safeGetStorage('lagerNach');
+    [fromSelect, toSelect, singleLocationSelect].forEach(sel => { sel.innerHTML = ''; });
+    locations.forEach(loc => {
+      const opt1 = document.createElement('option');
+      opt1.value = loc.pk;
+      opt1.textContent = loc.name;
+      fromSelect.appendChild(opt1);
+      toSelect.appendChild(opt1.cloneNode(true));
+      singleLocationSelect.appendChild(opt1.cloneNode(true));
+    });
+    if (savedFrom) fromSelect.value = savedFrom;
+    if (savedTo && savedTo !== fromSelect.value) {
+      toSelect.value = savedTo;
+    } else if (locations.length > 1) {
+      const other = locations.find(l => String(l.pk) !== fromSelect.value);
+      if (other) toSelect.value = String(other.pk);
+    }
+    applySingleLocationDefault();
+  } catch (err) {
+    showResult('Lagerorte konnten nicht geladen werden: ' + err.message, false);
+  }
+}
+loadLocations();
+
+const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+async function loadParts() {
+  if (isTouchDevice) return;
+  try {
+    const resp = await fetch(API_PARTS);
+    const parts = await resp.json();
+    partsDatalist.innerHTML = '';
+    parts.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.IPN;
+      opt.label = p.name;
+      opt.textContent = p.name;
+      partsDatalist.appendChild(opt);
+    });
+    input.setAttribute('list', 'partsDatalist');
+  } catch (err) {}
+}
+loadParts();
+
+fromSelect.addEventListener('change', () => safeSetStorage('lagerVon', fromSelect.value));
+toSelect.addEventListener('change', () => safeSetStorage('lagerNach', toSelect.value));
+singleLocationSelect.addEventListener('change', () => {
+  const storageKey = currentMode === 'Einlagern' ? 'lagerOrtEin' : 'lagerOrtAus';
+  safeSetStorage(storageKey, singleLocationSelect.value);
+});
+
+// Bon: Summe pro Artikel seit dem letzten Zuruecksetzen.
+let counters = (function () {
+  try { return JSON.parse(safeGetStorage('lagerZaehler') || '{}'); } catch (e) { return {}; }
+})();
+function persistCounters() {
+  try { safeSetStorage('lagerZaehler', JSON.stringify(counters)); } catch (e) {}
+}
+function renderCounters() {
+  const entries = Object.entries(counters).sort((a, b) => (b[1].lastTs || 0) - (a[1].lastTs || 0));
+  counterList.innerHTML = '';
+  let total = 0;
+  if (!entries.length) {
+    const li = document.createElement('li');
+    li.className = 'receipt-empty';
+    li.textContent = 'Noch keine Scans seit dem letzten Zurücksetzen.';
+    counterList.appendChild(li);
+    receiptTotal.style.display = 'none';
+    return;
+  }
+  entries.forEach(([code, info]) => {
+    total += info.count;
+    const li = document.createElement('li');
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'receipt-name';
+    nameSpan.textContent = info.name || code;
+    const countSpan = document.createElement('span');
+    countSpan.className = 'receipt-count';
+    countSpan.textContent = info.count;
+    li.append(nameSpan, countSpan);
+    counterList.appendChild(li);
+  });
+  receiptTotalValue.textContent = total;
+  receiptTotal.style.display = 'flex';
+}
+function addToCounter(barcode, name, qty) {
+  const key = (barcode || '').trim().toUpperCase();
+  if (!key) return;
+  if (!counters[key]) counters[key] = { name: name || key, count: 0 };
+  if (name) counters[key].name = name;
+  counters[key].count += qty;
+  counters[key].lastTs = Date.now();
+  persistCounters();
+  renderCounters();
+}
+function subtractFromCounter(barcode, qty) {
+  const key = (barcode || '').trim().toUpperCase();
+  if (!key || !counters[key]) return;
+  counters[key].count -= qty;
+  if (counters[key].count <= 0) delete counters[key];
+  persistCounters();
+  renderCounters();
+}
+counterReset.addEventListener('click', () => {
+  counters = {};
+  persistCounters();
+  renderCounters();
+});
+renderCounters();
+
+let resultTimer = null;
+function showResult(message, ok) {
+  resultText.textContent = message;
+  resultIcon.innerHTML = ok ? ICON_OK : ICON_ERR;
+  resultBox.className = 'result show ' + (ok ? 'ok' : 'err');
+  if (ok) playSuccessSound(); else playErrorSound();
+  flashScreen(ok);
+  if (resultTimer) clearTimeout(resultTimer);
+  resultTimer = setTimeout(() => { resultBox.classList.remove('show'); }, 3000);
+}
+
+let canUndo = false;
+let lastScanForUndo = null;
+function setUndoAvailable(v) {
+  canUndo = v;
+  undoBtn.disabled = !v;
+}
+
+async function submitScan(barcode) {
+  if (!currentMode) { showResult('Bitte zuerst oben einen Modus wählen.', false); return; }
+  if (currentMode === 'Umlagern' && fromSelect.value === toSelect.value) { showResult('Von- und Nach-Lagerort dürfen nicht identisch sein.', false); return; }
+  if ((currentMode === 'Einlagern' || currentMode === 'Auslagern') && !singleLocationSelect.value) { showResult('Bitte einen Lagerort wählen.', false); return; }
+  const qty = currentQty();
+  try {
+    const resp = await fetch(API_ACTION, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mode: currentMode, barcode: barcode, quantity: qty,
+        location: singleLocationSelect.value, fromLocation: fromSelect.value, toLocation: toSelect.value
+      })
+    });
+    if (resp.status === 401) { window.location.href = '/login'; return; }
+    const data = await resp.json();
+    showResult(data.message || 'Keine Antwort erhalten.', !!data.success);
+    if (data.success) {
+      const nameMatch = (data.message || '').match(/^(?:Eingelagert|Ausgelagert|Umgelagert): (.+?) \(/);
+      addToCounter(barcode, nameMatch ? nameMatch[1] : null, qty);
+      lastScanForUndo = { barcode: barcode, qty: qty };
+      setUndoAvailable(true);
+    }
+  } catch (err) {
+    showResult('Verbindungsfehler: ' + err.message, false);
+  }
+}
+
+let scanQueue = [];
+let queueBusy = false;
+const queueIndicator = document.getElementById('queueIndicator');
+function updateQueueIndicator() {
+  const pending = scanQueue.length + (queueBusy ? 1 : 0);
+  queueIndicator.textContent = pending > 1 ? `${pending} Scans werden verarbeitet…` : '';
+}
+async function processQueue() {
+  if (queueBusy) return;
+  queueBusy = true;
+  while (scanQueue.length > 0) {
+    const barcode = scanQueue.shift();
+    updateQueueIndicator();
+    await submitScan(barcode);
+  }
+  queueBusy = false;
+  updateQueueIndicator();
+}
+function enqueueScan(barcode) {
+  scanQueue.push(barcode);
+  updateQueueIndicator();
+  processQueue();
+}
+
+undoBtn.addEventListener('click', async () => {
+  if (!canUndo) return;
+  setUndoAvailable(false);
+  try {
+    const resp = await fetch(API_UNDO, { method: 'POST' });
+    if (resp.status === 401) { window.location.href = '/login'; return; }
+    const data = await resp.json();
+    showResult(data.message || 'Keine Antwort erhalten.', !!data.success);
+    if (data.success && lastScanForUndo) {
+      subtractFromCounter(lastScanForUndo.barcode, lastScanForUndo.qty);
+      lastScanForUndo = null;
+    }
+  } catch (err) {
+    showResult('Verbindungsfehler: ' + err.message, false);
+  }
+  input.focus();
+});
+
+// Globale Scan-Erfassung: faengt Eingaben des Scanners unabhaengig davon ab,
+// ob das Barcode-Feld gerade fokussiert ist. Treibt input.value selbst,
+// damit es keinen Unterschied macht, wo der Fokus zufaellig liegt.
+let scanBuffer = '';
+function syncScanDisplay() { input.value = scanBuffer; }
+function isNativeControl(el) {
+  return el && (el.tagName === 'BUTTON' || el.tagName === 'SELECT' || el.tagName === 'A');
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const active = document.activeElement;
+
+  // Solange kein Scan im Gange ist, Leertaste/Enter auf Buttons/Select
+  // normal wirken lassen (Tastatur-Bedienbarkeit nicht kaputt machen).
+  if (scanBuffer.length === 0 && isNativeControl(active) && (e.key === 'Enter' || e.key === ' ')) {
+    return;
+  }
+
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const value = scanBuffer.trim();
+    scanBuffer = '';
+    syncScanDisplay();
+    if (value) enqueueScan(value);
+    return;
+  }
+  if (e.key === 'Backspace') {
+    e.preventDefault();
+    scanBuffer = scanBuffer.slice(0, -1);
+    syncScanDisplay();
+    return;
+  }
+  if (e.key.length === 1) {
+    e.preventDefault();
+    scanBuffer += e.key;
+    syncScanDisplay();
+    if (document.activeElement !== input) input.focus();
+  }
+});
+
+// Wake Lock: Bildschirm soll waehrend des Scannens nicht einschlafen.
+let wakeLock = null;
+async function requestWakeLock() {
+  try {
+    if ('wakeLock' in navigator) {
+      wakeLock = await navigator.wakeLock.request('screen');
+    }
+  } catch (e) { /* nicht unterstuetzt o. Seite nicht sichtbar - kein Problem */ }
+}
+requestWakeLock();
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') requestWakeLock();
+});
+document.addEventListener('click', () => { if (!wakeLock) requestWakeLock(); });
+
+input.focus();
+</script>
+
+</body>
+</html>

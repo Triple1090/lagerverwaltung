@@ -1,0 +1,11 @@
+services:
+  lager-app:
+    build: .
+    restart: unless-stopped
+    environment:
+      INVENTREE_URL: ${INVENTREE_URL}
+      INVENTREE_TOKEN: ${INVENTREE_TOKEN}
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER}
+      BASIC_AUTH_PASS: ${BASIC_AUTH_PASS}
+    ports:
+      - "8000:8000"
