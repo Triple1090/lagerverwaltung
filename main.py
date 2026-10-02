@@ -205,6 +205,8 @@ async def api_scan(payload: dict, auth: bool = Depends(check_auth)):
             _last_action = {
                 "type": "remove",
                 "stock_pk": oldest["pk"],
+                "part_pk": part["pk"],
+                "location": location,
                 "quantity": quantity,
                 "label": f'Ausgelagert: {part["name"]} ({loc_name.get(location)}, -{quantity})',
             }
@@ -233,13 +235,37 @@ async def api_scan(payload: dict, auth: bool = Depends(check_auth)):
             r = await client.post(
                 f"{INVENTREE_URL}/api/stock/transfer/",
                 headers=inv_headers(),
-                json={"items": [{"pk": oldest["pk"], "quantity": quantity}], "location": to_location},
+                json={
+                    "items": [{"pk": oldest["pk"], "quantity": quantity, "merge": False}],
+                    "location": to_location,
+                },
             )
             if r.status_code >= 400:
                 return {"success": False, "message": f"InvenTree-Fehler: {r.text[:200]}"}
+
+            # Bei einer Teilmengen-Umlagerung spaltet InvenTree einen neuen
+            # Posten (neue PK) am Zielort ab und laesst den urspruenglichen
+            # Posten (reduziert) am Quellort liegen. Nur bei vollstaendiger
+            # Umlagerung der gesamten Menge bleibt die PK erhalten. Deshalb
+            # muessen wir ermitteln, welcher Posten die bewegte Menge jetzt
+            # tatsaechlich traegt, damit "Rueckgaengig" den richtigen Posten
+            # zurueckbewegt statt den (unveraenderten) alten Posten.
+            before_dest_pks = {
+                s["pk"] for s in stock
+                if s["part"] == part["pk"] and s["location"] == to_location
+            }
+            dest_resp = await client.get(
+                f"{INVENTREE_URL}/api/stock/",
+                headers=inv_headers(),
+                params={"part": part["pk"], "location": to_location, "in_stock": "true"},
+            )
+            dest_resp.raise_for_status()
+            new_items = [i for i in dest_resp.json() if i["pk"] not in before_dest_pks]
+            result_pk = new_items[0]["pk"] if new_items else oldest["pk"]
+
             _last_action = {
                 "type": "transfer",
-                "stock_pk": oldest["pk"],
+                "stock_pk": result_pk,
                 "quantity": quantity,
                 "from_location": from_location,
                 "to_location": to_location,
@@ -264,17 +290,37 @@ async def api_undo(auth: bool = Depends(check_auth)):
                 json={"items": [{"pk": action["stock_pk"], "quantity": action["quantity"]}]},
             )
         elif action["type"] == "remove":
-            r = await client.post(
-                f"{INVENTREE_URL}/api/stock/add/",
-                headers=inv_headers(),
-                json={"items": [{"pk": action["stock_pk"], "quantity": action["quantity"]}]},
+            # Wurde der Posten durch die Auslagerung komplett geleert, loescht
+            # InvenTree ihn standardmaessig (STOCK_DELETE_DEPLETED_DEFAULT).
+            # In dem Fall gibt es keine PK mehr, die wir aufstocken koennten -
+            # stattdessen muss der Posten neu angelegt werden.
+            check = await client.get(
+                f"{INVENTREE_URL}/api/stock/{action['stock_pk']}/", headers=inv_headers()
             )
+            if check.status_code == 404:
+                r = await client.post(
+                    f"{INVENTREE_URL}/api/stock/",
+                    headers=inv_headers(),
+                    json={
+                        "part": action["part_pk"],
+                        "location": action["location"],
+                        "quantity": action["quantity"],
+                    },
+                )
+            else:
+                r = await client.post(
+                    f"{INVENTREE_URL}/api/stock/add/",
+                    headers=inv_headers(),
+                    json={"items": [{"pk": action["stock_pk"], "quantity": action["quantity"]}]},
+                )
         elif action["type"] == "transfer":
             r = await client.post(
                 f"{INVENTREE_URL}/api/stock/transfer/",
                 headers=inv_headers(),
                 json={
-                    "items": [{"pk": action["stock_pk"], "quantity": action["quantity"]}],
+                    "items": [
+                        {"pk": action["stock_pk"], "quantity": action["quantity"], "merge": False}
+                    ],
                     "location": action["from_location"],
                 },
             )
