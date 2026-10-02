@@ -3,7 +3,7 @@ services:
     build: .
     restart: unless-stopped
     environment:
-      INVENTREE_URL: ${INVENTREE_URL}
+      INVENTREE_URL: https://lager.leine-honig.de
       INVENTREE_TOKEN: ${INVENTREE_TOKEN}
       BASIC_AUTH_USER: ${BASIC_AUTH_USER}
       BASIC_AUTH_PASS: ${BASIC_AUTH_PASS}
