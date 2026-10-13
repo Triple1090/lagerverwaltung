@@ -17,7 +17,10 @@ SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 30 Tage
 
 CACHE_TTL = 45
 _cache = {"parts": None, "parts_ts": 0.0, "locations": None, "locations_ts": 0.0}
-_last_action = None
+# Letzte Aktion pro Session (nicht global!), damit "Rueckgaengig" auf einem
+# Geraet nicht versehentlich den Scan eines anderen Geraets/Benutzers
+# rueckgaengig macht, wenn mehrere Stationen gleichzeitig scannen.
+_last_actions: dict[str, dict] = {}
 _sessions: dict[str, float] = {}  # session_id -> Ablauf-Zeitstempel
 
 app = FastAPI()
@@ -38,11 +41,11 @@ def is_valid_session(sid: str | None) -> bool:
     return True
 
 
-def check_auth(request: Request) -> bool:
+def check_auth(request: Request) -> str:
     sid = request.cookies.get(SESSION_COOKIE)
     if not is_valid_session(sid):
         raise HTTPException(status_code=401, detail="Nicht angemeldet.")
-    return True
+    return sid
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -74,6 +77,7 @@ async def logout(request: Request):
     sid = request.cookies.get(SESSION_COOKIE)
     if sid:
         _sessions.pop(sid, None)
+        _last_actions.pop(sid, None)
     resp = RedirectResponse(url="/login", status_code=303)
     resp.delete_cookie(SESSION_COOKIE)
     return resp
@@ -130,8 +134,7 @@ async def api_parts(auth: bool = Depends(check_auth)):
 
 
 @app.post("/api/scan")
-async def api_scan(payload: dict, auth: bool = Depends(check_auth)):
-    global _last_action
+async def api_scan(payload: dict, sid: str = Depends(check_auth)):
     mode = payload.get("mode")
     barcode = (payload.get("barcode") or "").strip()
     try:
@@ -170,13 +173,13 @@ async def api_scan(payload: dict, auth: bool = Depends(check_auth)):
             new_item = r.json()
             if isinstance(new_item, list):
                 new_item = new_item[0]
-            _last_action = {
+            _last_actions[sid] = {
                 "type": "create",
                 "stock_pk": new_item["pk"],
                 "quantity": quantity,
                 "label": f'Eingelagert: {part["name"]} ({loc_name.get(location, location)}, +{quantity})',
             }
-            return {"success": True, "message": _last_action["label"]}
+            return {"success": True, "message": _last_actions[sid]["label"]}
 
         if mode == "Auslagern":
             if not location:
@@ -188,29 +191,41 @@ async def api_scan(payload: dict, auth: bool = Depends(check_auth)):
             ]
             if not items:
                 return {"success": False, "message": f'Kein Bestand von {part["name"]} am gewählten Lagerort vorhanden.'}
-            oldest = items[0]
-            if float(oldest["quantity"]) < quantity:
+            total_available = sum(float(s["quantity"]) for s in items)
+            if total_available < quantity:
                 return {
                     "success": False,
-                    "message": f'Nur {oldest["quantity"]} Stück im ältesten Posten von {part["name"]} an '
+                    "message": f'Nur {total_available:g} Stück von {part["name"]} an '
                     f'{loc_name.get(location)} vorhanden (angefordert: {quantity}).',
                 }
+            # Bestand kann auf mehrere Posten (z.B. mehrere Einlagerungen)
+            # verteilt sein. Es wird vom aeltesten Posten beginnend entnommen
+            # (FIFO), bis die angeforderte Menge erreicht ist.
+            remaining = float(quantity)
+            allocations = []
+            for s in items:
+                if remaining <= 0:
+                    break
+                take = min(float(s["quantity"]), remaining)
+                if take > 0:
+                    allocations.append({"pk": s["pk"], "quantity": take})
+                    remaining -= take
             r = await client.post(
                 f"{INVENTREE_URL}/api/stock/remove/",
                 headers=inv_headers(),
-                json={"items": [{"pk": oldest["pk"], "quantity": quantity}]},
+                json={"items": allocations},
             )
             if r.status_code >= 400:
                 return {"success": False, "message": f"InvenTree-Fehler: {r.text[:200]}"}
-            _last_action = {
+            _last_actions[sid] = {
                 "type": "remove",
-                "stock_pk": oldest["pk"],
+                "removals": [{"stock_pk": a["pk"], "quantity": a["quantity"]} for a in allocations],
                 "part_pk": part["pk"],
                 "location": location,
                 "quantity": quantity,
                 "label": f'Ausgelagert: {part["name"]} ({loc_name.get(location)}, -{quantity})',
             }
-            return {"success": True, "message": _last_action["label"]}
+            return {"success": True, "message": _last_actions[sid]["label"]}
 
         if mode == "Umlagern":
             if not from_location or not to_location:
@@ -225,35 +240,45 @@ async def api_scan(payload: dict, auth: bool = Depends(check_auth)):
             ]
             if not items:
                 return {"success": False, "message": f'Kein Bestand von {part["name"]} am gewählten Von-Lagerort vorhanden.'}
-            oldest = items[0]
-            if float(oldest["quantity"]) < quantity:
+            total_available = sum(float(s["quantity"]) for s in items)
+            if total_available < quantity:
                 return {
                     "success": False,
-                    "message": f'Nur {oldest["quantity"]} Stück im ältesten Posten von {part["name"]} an '
+                    "message": f'Nur {total_available:g} Stück von {part["name"]} an '
                     f'{loc_name.get(from_location)} vorhanden (angefordert: {quantity}).',
                 }
-            r = await client.post(
-                f"{INVENTREE_URL}/api/stock/transfer/",
-                headers=inv_headers(),
-                json={
-                    "items": [{"pk": oldest["pk"], "quantity": quantity, "merge": False}],
-                    "location": to_location,
-                },
-            )
-            if r.status_code >= 400:
-                return {"success": False, "message": f"InvenTree-Fehler: {r.text[:200]}"}
+            # Bestand kann auf mehrere Posten verteilt sein. Es wird vom
+            # aeltesten Posten beginnend entnommen (FIFO), bis die
+            # angeforderte Menge erreicht ist.
+            remaining = float(quantity)
+            allocations = []
+            for s in items:
+                if remaining <= 0:
+                    break
+                take = min(float(s["quantity"]), remaining)
+                if take > 0:
+                    allocations.append({"pk": s["pk"], "quantity": take, "merge": False})
+                    remaining -= take
 
             # Bei einer Teilmengen-Umlagerung spaltet InvenTree einen neuen
             # Posten (neue PK) am Zielort ab und laesst den urspruenglichen
             # Posten (reduziert) am Quellort liegen. Nur bei vollstaendiger
             # Umlagerung der gesamten Menge bleibt die PK erhalten. Deshalb
-            # muessen wir ermitteln, welcher Posten die bewegte Menge jetzt
-            # tatsaechlich traegt, damit "Rueckgaengig" den richtigen Posten
-            # zurueckbewegt statt den (unveraenderten) alten Posten.
+            # muessen wir ermitteln, welche Posten die bewegte Menge jetzt
+            # tatsaechlich tragen, damit "Rueckgaengig" die richtigen Posten
+            # zurueckbewegt statt die (unveraenderten) alten Posten.
             before_dest_pks = {
                 s["pk"] for s in stock
                 if s["part"] == part["pk"] and s["location"] == to_location
             }
+            r = await client.post(
+                f"{INVENTREE_URL}/api/stock/transfer/",
+                headers=inv_headers(),
+                json={"items": allocations, "location": to_location},
+            )
+            if r.status_code >= 400:
+                return {"success": False, "message": f"InvenTree-Fehler: {r.text[:200]}"}
+
             dest_resp = await client.get(
                 f"{INVENTREE_URL}/api/stock/",
                 headers=inv_headers(),
@@ -261,27 +286,25 @@ async def api_scan(payload: dict, auth: bool = Depends(check_auth)):
             )
             dest_resp.raise_for_status()
             new_items = [i for i in dest_resp.json() if i["pk"] not in before_dest_pks]
-            result_pk = new_items[0]["pk"] if new_items else oldest["pk"]
 
-            _last_action = {
+            _last_actions[sid] = {
                 "type": "transfer",
-                "stock_pk": result_pk,
+                "transfers": [{"stock_pk": i["pk"], "quantity": float(i["quantity"])} for i in new_items],
                 "quantity": quantity,
                 "from_location": from_location,
                 "to_location": to_location,
                 "label": f'Umgelagert: {part["name"]} ({loc_name.get(from_location)} → {loc_name.get(to_location)}, {quantity})',
             }
-            return {"success": True, "message": _last_action["label"]}
+            return {"success": True, "message": _last_actions[sid]["label"]}
 
     return {"success": False, "message": f"Unbekannter Modus: {mode}."}
 
 
 @app.post("/api/undo")
-async def api_undo(auth: bool = Depends(check_auth)):
-    global _last_action
-    if not _last_action:
+async def api_undo(sid: str = Depends(check_auth)):
+    action = _last_actions.get(sid)
+    if not action:
         return {"success": False, "message": "Nichts zum Rückgängigmachen vorhanden."}
-    action = _last_action
     async with httpx.AsyncClient(timeout=15) as client:
         if action["type"] == "create":
             r = await client.post(
@@ -289,48 +312,61 @@ async def api_undo(auth: bool = Depends(check_auth)):
                 headers=inv_headers(),
                 json={"items": [{"pk": action["stock_pk"], "quantity": action["quantity"]}]},
             )
+            if r.status_code >= 400:
+                return {"success": False, "message": f"Rückgängig fehlgeschlagen: {r.text[:200]}"}
         elif action["type"] == "remove":
-            # Wurde der Posten durch die Auslagerung komplett geleert, loescht
+            # Wurde ein Posten durch die Auslagerung komplett geleert, loescht
             # InvenTree ihn standardmaessig (STOCK_DELETE_DEPLETED_DEFAULT).
             # In dem Fall gibt es keine PK mehr, die wir aufstocken koennten -
-            # stattdessen muss der Posten neu angelegt werden.
-            check = await client.get(
-                f"{INVENTREE_URL}/api/stock/{action['stock_pk']}/", headers=inv_headers()
-            )
-            if check.status_code == 404:
-                r = await client.post(
-                    f"{INVENTREE_URL}/api/stock/",
-                    headers=inv_headers(),
-                    json={
-                        "part": action["part_pk"],
-                        "location": action["location"],
-                        "quantity": action["quantity"],
-                    },
+            # stattdessen muss der Posten neu angelegt werden. Eine Auslagerung
+            # kann mehrere Posten betroffen haben (FIFO ueber mehrere Chargen),
+            # daher wird jeder einzeln geprueft.
+            add_items = []
+            for rem in action["removals"]:
+                check = await client.get(
+                    f"{INVENTREE_URL}/api/stock/{rem['stock_pk']}/", headers=inv_headers()
                 )
-            else:
+                if check.status_code == 404:
+                    r = await client.post(
+                        f"{INVENTREE_URL}/api/stock/",
+                        headers=inv_headers(),
+                        json={
+                            "part": action["part_pk"],
+                            "location": action["location"],
+                            "quantity": rem["quantity"],
+                        },
+                    )
+                    if r.status_code >= 400:
+                        return {"success": False, "message": f"Rückgängig fehlgeschlagen: {r.text[:200]}"}
+                else:
+                    add_items.append({"pk": rem["stock_pk"], "quantity": rem["quantity"]})
+            if add_items:
                 r = await client.post(
                     f"{INVENTREE_URL}/api/stock/add/",
                     headers=inv_headers(),
-                    json={"items": [{"pk": action["stock_pk"], "quantity": action["quantity"]}]},
+                    json={"items": add_items},
                 )
+                if r.status_code >= 400:
+                    return {"success": False, "message": f"Rückgängig fehlgeschlagen: {r.text[:200]}"}
         elif action["type"] == "transfer":
             r = await client.post(
                 f"{INVENTREE_URL}/api/stock/transfer/",
                 headers=inv_headers(),
                 json={
                     "items": [
-                        {"pk": action["stock_pk"], "quantity": action["quantity"], "merge": False}
+                        {"pk": t["stock_pk"], "quantity": t["quantity"], "merge": False}
+                        for t in action["transfers"]
                     ],
                     "location": action["from_location"],
                 },
             )
+            if r.status_code >= 400:
+                return {"success": False, "message": f"Rückgängig fehlgeschlagen: {r.text[:200]}"}
         else:
             return {"success": False, "message": "Unbekannte Aktion."}
 
-    if r.status_code >= 400:
-        return {"success": False, "message": f"Rückgängig fehlgeschlagen: {r.text[:200]}"}
     undone_label = action["label"]
-    _last_action = None
+    _last_actions.pop(sid, None)
     return {"success": True, "message": f"Rückgängig gemacht: {undone_label}"}
 
 
