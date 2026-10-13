@@ -84,7 +84,8 @@
   }
   header .logo { width: 22px; height: 22px; color: var(--active-border); flex-shrink: 0; }
   h1 { font-size: 15px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
-  .logout-form { position: absolute; right: 0; top: 50%; transform: translateY(-50%); margin: 0; }
+  .header-actions { position: absolute; right: 0; top: 50%; transform: translateY(-50%); display: flex; gap: 2px; }
+  .logout-form { margin: 0; }
   .logout-btn {
     width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;
     border: none; background: transparent; color: var(--muted); cursor: pointer; touch-action: manipulation;
@@ -251,6 +252,31 @@
   }
   .receipt-total .n { color: var(--muted); font-weight: 600; }
   .receipt-total .v { font-variant-numeric: tabular-nums; }
+
+  .history-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4);
+    z-index: 500; align-items: flex-end; justify-content: center;
+  }
+  .history-overlay.show { display: flex; }
+  .history-panel {
+    width: 100%; max-width: 460px; max-height: 80vh; background: var(--card-bg);
+    border-radius: 16px 16px 0 0; box-shadow: var(--shadow-md);
+    display: flex; flex-direction: column; overflow: hidden;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .history-panel-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 14px 10px; font-size: 14px; font-weight: 700;
+    border-bottom: 1px solid var(--card-border);
+  }
+  .history-list { margin: 0; padding: 4px 14px 14px; list-style: none; overflow-y: auto; flex: 1; }
+  .history-list li {
+    padding: 9px 0; border-top: 1px solid var(--card-border); font-size: 13.5px;
+  }
+  .history-list li:first-child { border-top: none; }
+  .history-list .h-time { color: var(--muted); font-size: 11.5px; font-weight: 600; display: block; margin-bottom: 2px; }
+  .history-list .h-label { color: var(--text); }
+  .history-empty { font-size: 12.5px; color: var(--muted); padding: 10px 0; }
 </style>
 </head>
 <body>
@@ -264,12 +290,29 @@
       <path d="M9 12l2 2 4-4" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
     <h1>Lagerverwaltung — Leine Honig</h1>
-    <form method="POST" action="/logout" class="logout-form">
-      <button type="submit" class="logout-btn" aria-label="Abmelden" title="Abmelden">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 17l5-5-5-5" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 12H9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <div class="header-actions">
+      <button type="button" class="logout-btn" id="historyBtn" aria-label="Verlauf" title="Verlauf">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 4v4h4" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 7v5l3 3" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
-    </form>
+      <form method="POST" action="/logout" class="logout-form">
+        <button type="submit" class="logout-btn" aria-label="Abmelden" title="Abmelden">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 17l5-5-5-5" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 12H9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </form>
+    </div>
   </header>
+
+  <div class="history-overlay" id="historyOverlay">
+    <div class="history-panel">
+      <div class="history-panel-header">
+        <span>Verlauf</span>
+        <button type="button" class="logout-btn" id="historyCloseBtn" aria-label="Schließen" title="Schließen">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+      <ul class="history-list" id="historyList"></ul>
+    </div>
+  </div>
 
   <div class="mode-tabs" role="group" aria-label="Modus wählen">
     <button type="button" class="mode-tab" data-mode="Einlagern" aria-pressed="false">
@@ -354,6 +397,7 @@ const API_ACTION = '/api/scan';
 const API_LOCATIONS = '/api/locations';
 const API_PARTS = '/api/parts';
 const API_UNDO = '/api/undo';
+const API_HISTORY = '/api/history';
 
 const ICON_OK = '<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16Zm3.03-9.47a.75.75 0 00-1.06-1.06L9 10.44 7.03 8.47a.75.75 0 00-1.06 1.06l2.5 2.5a.75.75 0 001.06 0l4.5-4.5Z" clip-rule="evenodd"/>';
 const ICON_ERR = '<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16ZM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22Z" clip-rule="evenodd"/>';
@@ -377,6 +421,10 @@ const counterReset = document.getElementById('counterReset');
 const receiptTotal = document.getElementById('receiptTotal');
 const receiptTotalValue = document.getElementById('receiptTotalValue');
 const undoBtn = document.getElementById('undoBtn');
+const historyBtn = document.getElementById('historyBtn');
+const historyCloseBtn = document.getElementById('historyCloseBtn');
+const historyOverlay = document.getElementById('historyOverlay');
+const historyList = document.getElementById('historyList');
 
 function safeGetStorage(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
 function safeSetStorage(key, value) { try { localStorage.setItem(key, value); } catch (e) {} }
@@ -672,6 +720,42 @@ undoBtn.addEventListener('click', async () => {
   }
   input.focus();
 });
+
+function formatHistoryTime(ts) {
+  const d = new Date(ts * 1000);
+  return d.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+async function openHistory() {
+  historyOverlay.classList.add('show');
+  historyList.innerHTML = '<li class="history-empty">Lädt…</li>';
+  try {
+    const resp = await fetch(API_HISTORY);
+    if (resp.status === 401) { window.location.href = '/login'; return; }
+    const entries = await resp.json();
+    if (!Array.isArray(entries) || entries.length === 0) {
+      historyList.innerHTML = '<li class="history-empty">Noch keine Buchungen vorhanden.</li>';
+      return;
+    }
+    historyList.innerHTML = '';
+    entries.forEach(e => {
+      const li = document.createElement('li');
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'h-time';
+      timeSpan.textContent = formatHistoryTime(e.ts);
+      const labelSpan = document.createElement('span');
+      labelSpan.className = 'h-label';
+      labelSpan.textContent = e.label;
+      li.appendChild(timeSpan);
+      li.appendChild(labelSpan);
+      historyList.appendChild(li);
+    });
+  } catch (err) {
+    historyList.innerHTML = '<li class="history-empty">Verlauf konnte nicht geladen werden.</li>';
+  }
+}
+historyBtn.addEventListener('click', openHistory);
+historyCloseBtn.addEventListener('click', () => historyOverlay.classList.remove('show'));
+historyOverlay.addEventListener('click', (e) => { if (e.target === historyOverlay) historyOverlay.classList.remove('show'); });
 
 // Globale Scan-Erfassung: faengt Eingaben des Scanners unabhaengig davon ab,
 // ob das Barcode-Feld gerade fokussiert ist. Treibt input.value selbst,

@@ -9,3 +9,8 @@ services:
       BASIC_AUTH_PASS: ${BASIC_AUTH_PASS}
     ports:
       - "8000:8000"
+    volumes:
+      - lager-data:/app/data
+
+volumes:
+  lager-data:

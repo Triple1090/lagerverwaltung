@@ -1,6 +1,8 @@
 import os
 import time
+import json
 import asyncio
+import threading
 import secrets as secrets_module
 
 import httpx
@@ -14,6 +16,31 @@ BASIC_AUTH_PASS = os.environ["BASIC_AUTH_PASS"]
 
 SESSION_COOKIE = "lager_session"
 SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 30 Tage
+
+# Persistenter Verlauf aller Buchungen (ueberlebt Neustarts/Deploys, wenn
+# dieser Pfad auf ein gemountetes Volume zeigt - siehe docker-compose.yml).
+HISTORY_PATH = os.environ.get("HISTORY_PATH", "/app/data/history.jsonl")
+_history_lock = threading.Lock()
+
+
+def append_history(label: str) -> None:
+    os.makedirs(os.path.dirname(HISTORY_PATH), exist_ok=True)
+    entry = {"ts": time.time(), "label": label}
+    with _history_lock:
+        with open(HISTORY_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def read_history(limit: int = 100) -> list[dict]:
+    if not os.path.exists(HISTORY_PATH):
+        return []
+    with _history_lock:
+        with open(HISTORY_PATH, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+    entries = [json.loads(line) for line in lines[-limit:] if line.strip()]
+    entries.reverse()
+    return entries
+
 
 CACHE_TTL = 45
 _cache = {"parts": None, "parts_ts": 0.0, "locations": None, "locations_ts": 0.0}
@@ -179,6 +206,7 @@ async def api_scan(payload: dict, sid: str = Depends(check_auth)):
                 "quantity": quantity,
                 "label": f'Eingelagert: {part["name"]} ({loc_name.get(location, location)}, +{quantity})',
             }
+            append_history(_last_actions[sid]["label"])
             return {"success": True, "message": _last_actions[sid]["label"]}
 
         if mode == "Auslagern":
@@ -225,6 +253,7 @@ async def api_scan(payload: dict, sid: str = Depends(check_auth)):
                 "quantity": quantity,
                 "label": f'Ausgelagert: {part["name"]} ({loc_name.get(location)}, -{quantity})',
             }
+            append_history(_last_actions[sid]["label"])
             return {"success": True, "message": _last_actions[sid]["label"]}
 
         if mode == "Umlagern":
@@ -295,6 +324,7 @@ async def api_scan(payload: dict, sid: str = Depends(check_auth)):
                 "to_location": to_location,
                 "label": f'Umgelagert: {part["name"]} ({loc_name.get(from_location)} → {loc_name.get(to_location)}, {quantity})',
             }
+            append_history(_last_actions[sid]["label"])
             return {"success": True, "message": _last_actions[sid]["label"]}
 
     return {"success": False, "message": f"Unbekannter Modus: {mode}."}
@@ -367,7 +397,13 @@ async def api_undo(sid: str = Depends(check_auth)):
 
     undone_label = action["label"]
     _last_actions.pop(sid, None)
+    append_history(f"Rückgängig: {undone_label}")
     return {"success": True, "message": f"Rückgängig gemacht: {undone_label}"}
+
+
+@app.get("/api/history")
+async def api_history(limit: int = 100, auth: str = Depends(check_auth)):
+    return read_history(limit)
 
 
 @app.get("/", response_class=HTMLResponse)
